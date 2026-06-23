@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Room",
+      "description": "A private dual movie date room",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique room ID" },
+        "activeUrl": { "type": "string", "description": "Currently embedded video URL" },
+        "movieUrl": { "type": "string", "description": "Current draft/loaded video URL" },
+        "playing": { "type": "boolean", "description": "Playback active status" },
+        "currentTime": { "type": "number", "description": "Current playback time offset" },
+        "theme": { "type": "string", "description": "Selected vibe theme mood", "enum": ["midnight", "sunset", "emerald", "cinema"] },
+        "countdown": { "type": "integer", "description": "3-2-1 synchronizer countdown counter" },
+        "countdownStart": { "type": "number", "description": "Timestamp when countdown started" },
+        "warmGlow": { "type": "boolean", "description": "Yellow soft warm filter toggle state" },
+        "cuddleMode": { "type": "boolean", "description": "Cuddle ambient dark screen overlay toggle state" },
+        "ambient": { "type": "string", "description": "Type of white noises playing in background", "enum": ["off", "rain", "fire", "city"] },
+        "note": { "type": "string", "description": "Shared real-time scratchpad annotation contents" },
+        "confettiTrigger": { "type": "number", "description": "Timestamp indicating when confetti credits explosion was triggered" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp of room instance" }
+      },
+      "required": ["id", "createdAt"]
+    },
+    "ChatMsg": {
+      "title": "ChatMsg",
+      "description": "Standard instant text shout or floating heart emotion reaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "from": { "type": "string", "description": "Identifier of message sender" },
+        "text": { "type": "string", "description": "Whisper text contents or reaction emoji" },
+        "at": { "type": "number", "description": "Creation epoch millisecond timestamp" },
+        "reaction": { "type": "boolean" }
+      },
+      "required": ["id", "from", "text", "at"]
+    },
+    "VoiceMsg": {
+      "title": "VoiceMsg",
+      "description": "Short micro-voice audio clip whisper",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "from": { "type": "string" },
+        "audio": { "type": "string", "description": "Base64 encoded binary webm audio format" },
+        "at": { "type": "number" }
+      },
+      "required": ["id", "from", "audio", "at"]
+    },
+    "QueueItem": {
+      "title": "QueueItem",
+      "description": "Synchronized queue movies playlist timeline",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "url": { "type": "string" },
+        "title": { "type": "string" },
+        "at": { "type": "number", "description": "Queue ordering priority number" }
+      },
+      "required": ["id", "url", "title", "at"]
+    },
+    "WebrtcSignal": {
+      "title": "WebrtcSignal",
+      "description": "Dynamic web-RTC peer-connection negotiation message",
+      "type": "object",
+      "properties": {
+        "from": { "type": "string" },
+        "type": { "type": "string", "enum": ["offer", "answer", "ice"] },
+        "sdp": { "type": "object" },
+        "candidate": { "type": "object" },
+        "at": { "type": "number" }
+      },
+      "required": ["from", "type", "at"]
+    },
+    "Presence": {
+      "title": "Presence",
+      "description": "Liveness and multimedia peripherals indicators of active connection",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "camOn": { "type": "boolean" },
+        "micOn": { "type": "boolean" },
+        "joinedAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "camOn", "micOn", "joinedAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "rooms/{roomId}": {
+      "schema": "Room",
+      "description": "Global Room index document"
+    },
+    "rooms/{roomId}/chat/{chatId}": {
+      "schema": "ChatMsg",
+      "description": "Whisper chat notes thread"
+    },
+    "rooms/{roomId}/voice/{voiceId}": {
+      "schema": "VoiceMsg",
+      "description": "Whisper audio fragments list"
+    },
+    "rooms/{roomId}/queue/{queueItemId}": {
+      "schema": "QueueItem",
+      "description": "Cinema films lineup queue"
+    },
+    "rooms/{roomId}/signals/{signalId}": {
+      "schema": "WebrtcSignal",
+      "description": "Active audio video streams calls routing negotiations table"
+    },
+    "rooms/{roomId}/presence/{clientId}": {
+      "schema": "Presence",
+      "description": "Users tracking presence entries in current room"
+    }
+  }
+}

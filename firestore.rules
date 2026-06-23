@@ -1,0 +1,152 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reuseable helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 2. Room Collection Rules
+    match /rooms/{roomId} {
+      allow get: if isValidId(roomId);
+      allow create: if (
+        isValidId(roomId) &&
+        incoming().keys().hasAll(['id', 'createdAt']) &&
+        incoming().keys().size() <= 15 &&
+        incoming().id == roomId &&
+        incoming().createdAt is string &&
+        incoming().createdAt.size() <= 128 &&
+        (incoming().activeUrl == null || (incoming().activeUrl is string && incoming().activeUrl.size() <= 2048)) &&
+        (incoming().movieUrl == null || (incoming().movieUrl is string && incoming().movieUrl.size() <= 2048)) &&
+        (incoming().playing == null || incoming().playing is bool) &&
+        (incoming().currentTime == null || (incoming().currentTime is number && incoming().currentTime >= 0)) &&
+        (incoming().theme == null || (incoming().theme is string && incoming().theme.size() <= 64)) &&
+        (incoming().countdown == null || incoming().countdown is int) &&
+        (incoming().countdownStart == null || incoming().countdownStart is number) &&
+        (incoming().warmGlow == null || incoming().warmGlow is bool) &&
+        (incoming().cuddleMode == null || incoming().cuddleMode is bool) &&
+        (incoming().ambient == null || (incoming().ambient is string && incoming().ambient.size() <= 64)) &&
+        (incoming().note == null || (incoming().note is string && incoming().note.size() <= 8192)) &&
+        (incoming().confettiTrigger == null || incoming().confettiTrigger is number)
+      );
+
+      allow update: if (
+        isValidId(roomId) &&
+        incoming().keys().hasAll(['id', 'createdAt']) &&
+        incoming().keys().size() <= 15 &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        (incoming().activeUrl == null || (incoming().activeUrl is string && incoming().activeUrl.size() <= 2048)) &&
+        (incoming().movieUrl == null || (incoming().movieUrl is string && incoming().movieUrl.size() <= 2048)) &&
+        (incoming().playing == null || incoming().playing is bool) &&
+        (incoming().currentTime == null || (incoming().currentTime is number && incoming().currentTime >= 0)) &&
+        (incoming().theme == null || (incoming().theme is string && incoming().theme.size() <= 64 && (incoming().theme == "midnight" || incoming().theme == "sunset" || incoming().theme == "emerald" || incoming().theme == "cinema"))) &&
+        (incoming().countdown == null || incoming().countdown is int) &&
+        (incoming().countdownStart == null || incoming().countdownStart is number) &&
+        (incoming().warmGlow == null || incoming().warmGlow is bool) &&
+        (incoming().cuddleMode == null || incoming().cuddleMode is bool) &&
+        (incoming().ambient == null || (incoming().ambient is string && incoming().ambient.size() <= 64 && (incoming().ambient == "off" || incoming().ambient == "rain" || incoming().ambient == "fire" || incoming().ambient == "city"))) &&
+        (incoming().note == null || (incoming().note is string && incoming().note.size() <= 8192)) &&
+        (incoming().confettiTrigger == null || incoming().confettiTrigger is number)
+      );
+
+      // Subcollection Chat Messages
+      match /chat/{chatId} {
+        allow list, get: if isValidId(roomId);
+        allow create: if (
+          isValidId(roomId) &&
+          isValidId(chatId) &&
+          incoming().keys().hasAll(['id', 'from', 'text', 'at']) &&
+          incoming().keys().size() <= 6 &&
+          incoming().id == chatId &&
+          incoming().from is string && incoming().from.size() <= 64 &&
+          incoming().text is string && incoming().text.size() <= 10240 &&
+          incoming().at is number &&
+          (incoming().reaction == null || incoming().reaction is bool)
+        );
+        allow update, delete: if false;
+      }
+
+      // Subcollection Voice Whispers
+      match /voice/{voiceId} {
+        allow list, get: if isValidId(roomId);
+        allow create: if (
+          isValidId(roomId) &&
+          isValidId(voiceId) &&
+          incoming().keys().hasAll(['id', 'from', 'audio', 'at']) &&
+          incoming().keys().size() == 4 &&
+          incoming().id == voiceId &&
+          incoming().from is string && incoming().from.size() <= 64 &&
+          incoming().audio is string && incoming().audio.size() <= 400000 &&
+          incoming().at is number
+        );
+        allow update, delete: if false;
+      }
+
+      // Subcollection Queue Items
+      match /queue/{queueItemId} {
+        allow list, get: if isValidId(roomId);
+        allow create: if (
+          isValidId(roomId) &&
+          isValidId(queueItemId) &&
+          incoming().keys().hasAll(['id', 'url', 'title', 'at']) &&
+          incoming().keys().size() == 4 &&
+          incoming().id == queueItemId &&
+          incoming().url is string && incoming().url.size() <= 2048 &&
+          incoming().title is string && incoming().title.size() <= 256 &&
+          incoming().at is number
+        );
+        allow update: if false;
+        allow delete: if isValidId(roomId) && isValidId(queueItemId);
+      }
+
+      // Subcollection WebRTC Signals
+      match /signals/{signalId} {
+        allow list, get: if isValidId(roomId);
+        allow create: if (
+          isValidId(roomId) &&
+          isValidId(signalId) &&
+          incoming().keys().hasAll(['from', 'type', 'at']) &&
+          incoming().from is string && incoming().from.size() <= 64 &&
+          incoming().type is string && (incoming().type == "offer" || incoming().type == "answer" || incoming().type == "ice") &&
+          incoming().at is number &&
+          (incoming().sdp == null || incoming().sdp is map) &&
+          (incoming().candidate == null || incoming().candidate is map)
+        );
+        allow update: if false;
+        allow delete: if isValidId(roomId) && isValidId(signalId);
+      }
+
+      // Subcollection User Presence
+      match /presence/{clientId} {
+        allow list, get: if isValidId(roomId);
+        allow create, update: if (
+          isValidId(roomId) &&
+          isValidId(clientId) &&
+          incoming().keys().hasAll(['id', 'camOn', 'micOn', 'joinedAt', 'updatedAt']) &&
+          incoming().keys().size() == 5 &&
+          incoming().id == clientId &&
+          incoming().camOn is bool &&
+          incoming().micOn is bool &&
+          incoming().joinedAt is number &&
+          incoming().updatedAt is number
+        );
+        allow delete: if isValidId(roomId) && isValidId(clientId);
+      }
+    }
+  }
+}

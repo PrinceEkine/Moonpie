@@ -1,0 +1,11 @@
+{
+  "name": "Remix: Moonpie",
+  "description": "Lover\u0027s streaming app",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
