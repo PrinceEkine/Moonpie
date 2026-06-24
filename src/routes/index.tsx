@@ -307,7 +307,7 @@ function Index() {
     setTimeout(() => setInviteCopied(false), 3000);
   }
 
-  const baseVibeVariables: Record<ThemeKey, React.CSSProperties> = {
+  const baseVibeVariables: Record<ThemeKey, Record<string, string>> = {
     midnight: {
       "--primary": "#ef4444",
       "--primary-shadow": "rgba(239, 68, 68, 0.25)",

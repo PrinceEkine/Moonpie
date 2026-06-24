@@ -301,6 +301,7 @@ function Room() {
   const embed = useMemo(() => toEmbed(activeUrl), [activeUrl]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const isRemoteActionRef = useRef(false);
+  const latestRoomDataRef = useRef<any>(null);
   const [playing, setPlaying] = useState(false);
 
   // Chat
@@ -326,7 +327,8 @@ function Room() {
   const countdownIntervalRef = useRef<number | null>(null);
   const [copied, setCopied] = useState(false);
   function copyLink() {
-    void safeCopyText(window.location.href);
+    const inviteUrl = `${window.location.origin}/room/${roomId}`;
+    void safeCopyText(inviteUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
@@ -464,6 +466,7 @@ function Room() {
       (snap) => {
         if (!snap.exists()) return;
         const data = snap.data();
+        latestRoomDataRef.current = data;
 
         // Theme Sync
         if (data.theme && data.theme !== activeThemeRef.current) {
@@ -533,13 +536,13 @@ function Room() {
         }
 
         // Countdown syncer trigger
-        if (data.countdownStart && data.countdownStart !== lastCountdownTriggerRef.current) {
+        if (data.countdownStart && data.countdownStart > subscribeTime && data.countdownStart !== lastCountdownTriggerRef.current) {
           lastCountdownTriggerRef.current = data.countdownStart;
           runCountdown();
         }
 
         // End-credits Confetti trigger
-        if (data.confettiTrigger && data.confettiTrigger !== lastConfettiTriggerRef.current) {
+        if (data.confettiTrigger && data.confettiTrigger > subscribeTime && data.confettiTrigger !== lastConfettiTriggerRef.current) {
           lastConfettiTriggerRef.current = data.confettiTrigger;
           startConfettiEffect();
         }
@@ -715,6 +718,34 @@ function Room() {
     logHistory(url);
     toast("Movie loaded for both of you");
   }
+
+  const syncVideoToLatest = useCallback(() => {
+    const v = videoRef.current;
+    const data = latestRoomDataRef.current;
+    if (!v || !data) return;
+
+    isRemoteActionRef.current = true;
+
+    // Sync current play/pause state
+    if (typeof data.playing === "boolean") {
+      if (data.playing) {
+        void v.play().catch(() => {});
+        setPlaying(true);
+      } else {
+        v.pause();
+        setPlaying(false);
+      }
+    }
+
+    // Sync current seek position
+    if (typeof data.currentTime === "number") {
+      v.currentTime = data.currentTime;
+    }
+
+    setTimeout(() => {
+      isRemoteActionRef.current = false;
+    }, 500);
+  }, []);
 
   function onLocalPlay() {
     if (isRemoteActionRef.current) return;
@@ -1304,7 +1335,7 @@ function Room() {
 
   const isPipActive = isMobile && callOn && mobileTab !== "presence";
 
-  const baseVibeVariables: Record<ThemeKey, React.CSSProperties> = {
+  const baseVibeVariables: Record<ThemeKey, Record<string, string>> = {
     midnight: {
       "--primary": "#ef4444",
       "--primary-shadow": "rgba(239, 68, 68, 0.25)",
@@ -1527,6 +1558,7 @@ function Room() {
                 onPlay={onLocalPlay}
                 onPause={onLocalPause}
                 onSeeked={onLocalSeeked}
+                onLoadedMetadata={syncVideoToLatest}
                 className="h-full w-full"
               />
             )}
