@@ -33,8 +33,10 @@ import {
   Mic as MicIcon,
   Palette,
   RefreshCw,
+  LogOut,
 } from "lucide-react";
-import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
+import { db, handleFirestoreError, OperationType, auth } from "@/lib/firebase";
+import { LoversTheater } from "../components/LoversTheater";
 import {
   doc,
   setDoc,
@@ -228,6 +230,7 @@ function Room() {
 
   // Lifted state variables to prevent temporal dead zone (TDZ) for refs accessed before initialization
   const [cuddleMode, setCuddleMode] = useState(false);
+  const [loversTheater, setLoversTheater] = useState(false);
   const [warmGlow, setWarmGlow] = useState(false);
   const [activeTheme, setActiveTheme] = useState<ThemeKey>("midnight");
   const [note, setNote] = useState("");
@@ -333,6 +336,15 @@ function Room() {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  async function handleSignOut() {
+    try {
+      await auth.signOut();
+      toast.success("Signed out of your romantic sanctuary.");
+    } catch (err) {
+      toast.error("Could not sign out.");
+    }
+  }
+
   // Refs to prevent state capture in real-time listeners and lock cycles
   const activeThemeRef = useRef(activeTheme);
   activeThemeRef.current = activeTheme;
@@ -406,10 +418,19 @@ function Room() {
           const data = payload as { type: string; sdp?: unknown; candidate?: unknown };
           const sigId = generateUUID();
           await setDoc(doc(db, "rooms", roomId, "signals", sigId), {
+            id: sigId,
             from: me,
             type: data.type,
             sdp: data.sdp ? JSON.parse(JSON.stringify(data.sdp)) : null,
             candidate: data.candidate ? JSON.parse(JSON.stringify(data.candidate)) : null,
+            at: Date.now(),
+          });
+        } else if (event === "typing") {
+          const sigId = generateUUID();
+          await setDoc(doc(db, "rooms", roomId, "signals", sigId), {
+            id: sigId,
+            from: me,
+            type: "typing",
             at: Date.now(),
           });
         } else if (event === "media-state") {
@@ -898,6 +919,14 @@ function Room() {
           time: v.currentTime,
         });
       }
+    } else if (msg.type === "typing") {
+      setPartnerTyping(true);
+      if (typingTimeout.current) {
+        clearTimeout(typingTimeout.current);
+      }
+      typingTimeout.current = window.setTimeout(() => {
+        setPartnerTyping(false);
+      }, 3000);
     }
   }
 
@@ -972,8 +1001,13 @@ function Room() {
   // Typing indicator
   const [partnerTyping, setPartnerTyping] = useState(false);
   const typingTimeout = useRef<number | null>(null);
+  const lastTypingNotifyRef = useRef<number>(0);
   function notifyTyping() {
-    broadcast("typing", { from: me });
+    const now = Date.now();
+    if (now - lastTypingNotifyRef.current > 3000) {
+      lastTypingNotifyRef.current = now;
+      void broadcast("typing", { from: me });
+    }
   }
 
   // Cuddle mode + warm overlay
@@ -1509,6 +1543,27 @@ function Room() {
           </Button>
           <Button
             size="sm"
+            variant="ghost"
+            onClick={() => {
+              setLoversTheater((t) => !t);
+              setCuddleMode(false);
+            }}
+            className="rounded-full size-8 p-0"
+            title="Lover's Theater Mode"
+          >
+            <Film className={`size-4 ${loversTheater ? "text-primary fill-primary/20" : ""}`} />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleSignOut}
+            className="rounded-full size-8 p-0 text-muted-foreground hover:text-foreground hover:bg-destructive/10"
+            title="Sign Out"
+          >
+            <LogOut className="size-4" />
+          </Button>
+          <Button
+            size="sm"
             variant="secondary"
             onClick={copyLink}
             className="rounded-full h-8 px-2.5 text-xs inline-flex items-center gap-1 shrink-0"
@@ -1519,15 +1574,46 @@ function Room() {
         </div>
       </header>
 
-      <div
-        className={`transition-all duration-500 flex-1 ${
-          isMobile
-            ? "flex flex-col gap-4 p-4 pb-24"
-            : cuddleMode
-              ? "grid grid-cols-1 gap-4 p-4 md:p-6"
-              : "grid grid-cols-1 md:grid-cols-[1fr_340px] gap-4 p-4 md:p-6"
-        }`}
-      >
+      {loversTheater ? (
+        <LoversTheater
+          embed={embed}
+          videoRef={videoRef}
+          onLocalPlay={onLocalPlay}
+          onLocalPause={onLocalPause}
+          onLocalSeeked={onLocalSeeked}
+          syncVideoToLatest={syncVideoToLatest}
+          floaters={floaters}
+          movieUrl={movieUrl}
+          setMovieUrl={setMovieUrl}
+          loadMovie={loadMovie}
+          startCountdown={startCountdown}
+          rouletteSpin={rouletteSpin}
+          addToQueue={addToQueue}
+          setHistoryOpen={setHistoryOpen}
+          setNoteOpen={setNoteOpen}
+          warmGlow={warmGlow}
+          setWarmGlow={setWarmGlow}
+          cuddleMode={cuddleMode}
+          setCuddleMode={setCuddleMode}
+          ambient={ambient}
+          setAmbientSound={setAmbientSound}
+          currentTheme={currentTheme}
+          partnerJoined={partnerJoined}
+          myPresence={{ camOn, micOn }}
+          partnerPresence={{ camOn: partnerCamOn, micOn: partnerMicOn }}
+          onCloseTheater={() => setLoversTheater(false)}
+          onSendHeartReaction={(emoji) => sendChat(emoji, true)}
+        />
+      ) : (
+        <div
+          className={`transition-all duration-500 flex-1 ${
+            isMobile
+              ? "flex flex-col gap-4 p-4 pb-24"
+              : cuddleMode
+                ? "grid grid-cols-1 gap-4 p-4 md:p-6"
+                : "grid grid-cols-1 md:grid-cols-[1fr_340px] gap-4 p-4 md:p-6"
+          }`}
+        >
         {/* Movie pane */}
         <div
           className={`flex-col gap-4 transition-all duration-300 ${
@@ -2015,34 +2101,54 @@ function Room() {
                 if (m.reaction) {
                   return (
                     <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                      <span className="text-2xl">{m.text}</span>
+                      <span className="text-2xl animate-[pop_0.3s_ease-out]">{m.text}</span>
                     </div>
                   );
                 }
                 return (
-                  <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                  <div key={m.id} className={`flex items-end gap-1.5 ${mine ? "justify-end" : "justify-start"} mb-1`}>
+                    {!mine && (
+                      <div className="flex size-5 select-none items-center justify-center rounded-full bg-secondary text-[9px] font-bold text-secondary-foreground shadow-sm">
+                        L
+                      </div>
+                    )}
                     <div
                       className={
                         mine
-                          ? "max-w-[80%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-primary-foreground"
-                          : "max-w-[80%] rounded-2xl rounded-bl-sm bg-secondary px-3 py-2 text-secondary-foreground"
+                          ? "max-w-[75%] rounded-2xl rounded-br-sm bg-primary px-3 py-1.5 text-primary-foreground shadow-sm animate-in slide-in-from-right-2 duration-150"
+                          : "max-w-[75%] rounded-2xl rounded-bl-sm bg-secondary px-3 py-1.5 text-secondary-foreground shadow-sm animate-in slide-in-from-left-2 duration-150"
                       }
                     >
                       {m.text}
                     </div>
+                    {mine && (
+                      <div className="flex size-5 select-none items-center justify-center rounded-full bg-primary/20 text-[9px] font-bold text-primary shadow-sm border border-primary/20">
+                        Y
+                      </div>
+                    )}
                   </div>
                 );
               })}
               {voiceMsgs.map((v) => {
                 const mine = v.from === me;
                 return (
-                  <div key={v.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                  <div key={v.id} className={`flex items-center gap-1.5 ${mine ? "justify-end" : "justify-start"} mb-1`}>
+                    {!mine && (
+                      <div className="flex size-5 select-none items-center justify-center rounded-full bg-secondary text-[9px] font-bold text-secondary-foreground shadow-sm">
+                        L
+                      </div>
+                    )}
                     <button
                       onClick={() => playVoice(v)}
-                      className={`flex items-center gap-2 rounded-full px-3 py-2 text-xs ${mine ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"}`}
+                      className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs shadow-sm animate-in duration-150 ${mine ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"}`}
                     >
-                      <MicIcon className="size-3.5" /> Play whisper
+                      <MicIcon className="size-3" /> Play whisper
                     </button>
+                    {mine && (
+                      <div className="flex size-5 select-none items-center justify-center rounded-full bg-primary/20 text-[9px] font-bold text-primary shadow-sm border border-primary/20">
+                        Y
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2102,6 +2208,7 @@ function Room() {
           </div>
         </aside>
       </div>
+      )}
 
       {/* Mobile Tab bar dock */}
       {isMobile && (

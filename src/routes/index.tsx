@@ -17,10 +17,12 @@ import {
   ChevronRight,
   Tv,
   MessageCircle,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { auth } from "@/lib/firebase";
 
 // Define interactive background themes
 type ThemeKey = "midnight" | "sunset" | "emerald" | "cinema";
@@ -114,6 +116,15 @@ function Index() {
   const [joinId, setJoinId] = useState("");
   const [activeTheme, setActiveTheme] = useState<ThemeKey>("midnight");
   const [clickedHearts, setClickedHearts] = useState<Particle[]>([]);
+
+  const handleSignOut = async () => {
+    try {
+      await auth.signOut();
+      toast.success("Successfully logged out of your cinema seat.");
+    } catch (err) {
+      toast.error("Failed to log out.");
+    }
+  };
 
   // Interactive mock simulation states
   const [simPlaying, setSimPlaying] = useState(false);
@@ -384,6 +395,16 @@ function Index() {
               </button>
             ))}
           </div>
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleSignOut}
+            className="rounded-full border-border bg-card/40 backdrop-blur text-muted-foreground hover:text-foreground hover:bg-destructive/10 h-8 px-3 text-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            <LogOut className="size-3.5" />
+            <span>Leave Seat</span>
+          </Button>
         </div>
       </header>
 

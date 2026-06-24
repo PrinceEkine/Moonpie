@@ -7,7 +7,11 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { auth } from "../lib/firebase";
+import { onAuthStateChanged, type User } from "firebase/auth";
+import { AuthScreen } from "../components/AuthScreen";
+import { Heart } from "lucide-react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -178,6 +182,37 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0b0813]">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <Heart className="size-12 fill-primary text-primary animate-[heartBeat_1.2s_infinite]" />
+          <p className="font-serif text-lg text-muted-foreground/80 italic">Opening the cinema curtains...</p>
+        </div>
+        <style>{`
+          @keyframes heartBeat {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen />;
+  }
 
   return (
     <QueryClientProvider client={queryClient}>
