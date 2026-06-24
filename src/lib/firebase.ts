@@ -4,6 +4,12 @@ import { getFirestore } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 
 // Initialize dynamic Firebase config matching local config with environment overrides for Vercel
+const isCustomProject = !!import.meta.env.VITE_FIREBASE_PROJECT_ID && import.meta.env.VITE_FIREBASE_PROJECT_ID !== firebaseConfig.projectId;
+
+const firestoreDbId = isCustomProject
+  ? (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || undefined)
+  : (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfig.firestoreDatabaseId);
+
 const mergedConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
@@ -12,15 +18,14 @@ const mergedConfig = {
   messagingSenderId:
     import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
   appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
-  firestoreDatabaseId:
-    import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfig.firestoreDatabaseId,
+  firestoreDatabaseId: firestoreDbId,
 };
 
 // Initialize standard Firebase Core
 const app = initializeApp(mergedConfig);
 
 // CRITICAL: Must use firestoreDatabaseId in getFirestore as per guidelines
-export const db = getFirestore(app, mergedConfig.firestoreDatabaseId);
+export const db = firestoreDbId ? getFirestore(app, firestoreDbId) : getFirestore(app);
 export const auth = getAuth(app);
 
 // Operation types for standard error capturing

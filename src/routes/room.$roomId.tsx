@@ -631,22 +631,26 @@ function Room() {
     window.addEventListener("beforeunload", handleUnload);
 
     const matchPresenceCol = collection(db, "rooms", roomId, "presence");
-    const unsubscribePresence = onSnapshot(matchPresenceCol, (snap) => {
-      const list = snap.docs.map(
-        (doc) => doc.data() as { id: string; camOn: boolean; micOn: boolean; updatedAt: number },
-      );
-      const others = list.filter((p) => p.id !== me);
-      // Clean up stale users that crashed or disconnected
-      const activeOthers = others.filter((p) => Date.now() - p.updatedAt < 22000);
-      const active = activeOthers.length > 0;
+    const unsubscribePresence = onSnapshot(
+      matchPresenceCol,
+      (snap) => {
+        const list = snap.docs.map(
+          (doc) => doc.data() as { id: string; camOn: boolean; micOn: boolean; updatedAt: number },
+        );
+        const others = list.filter((p) => p.id !== me);
+        // Clean up stale users that crashed or disconnected (tolerate up to 5 mins clock skew)
+        const activeOthers = others.filter((p) => Math.abs(Date.now() - p.updatedAt) < 300000);
+        const active = activeOthers.length > 0;
 
-      setPartnerJoined(active);
-      if (active) {
-        const firstPartner = activeOthers[0];
-        setPartnerCamOn(firstPartner.camOn);
-        setPartnerMicOn(firstPartner.micOn);
-      }
-    });
+        setPartnerJoined(active);
+        if (active) {
+          const firstPartner = activeOthers[0];
+          setPartnerCamOn(firstPartner.camOn);
+          setPartnerMicOn(firstPartner.micOn);
+        }
+      },
+      (err) => handleFirestoreError(err, OperationType.GET, `rooms/${roomId}/presence`),
+    );
 
     // 6. WebRTC Signaling connection router
     const signalsRef = collection(db, "rooms", roomId, "signals");
