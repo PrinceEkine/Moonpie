@@ -147,6 +147,39 @@ service cloud.firestore {
         );
         allow delete: if isValidId(roomId) && isValidId(clientId);
       }
+
+      // Subcollection Love Notes
+      match /loveNotes/{noteId} {
+        allow list, get: if isValidId(roomId);
+        allow create: if (
+          isValidId(roomId) &&
+          isValidId(noteId) &&
+          incoming().keys().hasAll(['id', 'senderId', 'senderName', 'text', 'color', 'mood', 'at']) &&
+          incoming().id == noteId &&
+          incoming().senderId is string && incoming().senderId.size() <= 128 &&
+          incoming().senderName is string && incoming().senderName.size() <= 128 &&
+          incoming().text is string && incoming().text.size() <= 140 &&
+          incoming().color is string && (incoming().color == "rose" || incoming().color == "lavender" || incoming().color == "peach" || incoming().color == "mint") &&
+          incoming().mood is string && (incoming().mood == "Sweet" || incoming().mood == "Cozy" || incoming().mood == "Playful" || incoming().mood == "Dreamy") &&
+          incoming().at is number &&
+          (incoming().likes == null || (incoming().likes is int && incoming().likes >= 0)) &&
+          (incoming().likedBy == null || (incoming().likedBy is list && incoming().likedBy.size() <= 10))
+        );
+        allow update: if (
+          isValidId(roomId) &&
+          isValidId(noteId) &&
+          incoming().id == existing().id &&
+          incoming().senderId == existing().senderId &&
+          incoming().senderName == existing().senderName &&
+          incoming().text == existing().text &&
+          incoming().color == existing().color &&
+          incoming().mood == existing().mood &&
+          incoming().at == existing().at &&
+          (incoming().likes is int && incoming().likes >= 0) &&
+          (incoming().likedBy is list && incoming().likedBy.size() <= 10)
+        );
+        allow delete: if isValidId(roomId) && isValidId(noteId);
+      }
     }
   }
 }

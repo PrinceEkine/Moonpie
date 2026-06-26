@@ -34,9 +34,11 @@ import {
   Palette,
   RefreshCw,
   LogOut,
+  HeartHandshake,
 } from "lucide-react";
 import { db, handleFirestoreError, OperationType, auth } from "@/lib/firebase";
 import { LoversTheater } from "../components/LoversTheater";
+import { CouplesRoom } from "../components/CouplesRoom";
 import {
   doc,
   setDoc,
@@ -231,6 +233,7 @@ function Room() {
   // Lifted state variables to prevent temporal dead zone (TDZ) for refs accessed before initialization
   const [cuddleMode, setCuddleMode] = useState(false);
   const [loversTheater, setLoversTheater] = useState(false);
+  const [couplesRoomActive, setCouplesRoomActive] = useState(false);
   const [warmGlow, setWarmGlow] = useState(false);
   const [activeTheme, setActiveTheme] = useState<ThemeKey>("midnight");
   const [note, setNote] = useState("");
@@ -1546,12 +1549,29 @@ function Room() {
             variant="ghost"
             onClick={() => {
               setLoversTheater((t) => !t);
+              setCouplesRoomActive(false);
               setCuddleMode(false);
             }}
             className="rounded-full size-8 p-0"
             title="Lover's Theater Mode"
           >
             <Film className={`size-4 ${loversTheater ? "text-primary fill-primary/20" : ""}`} />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setCouplesRoomActive((t) => !t);
+              setLoversTheater(false);
+              setCuddleMode(false);
+            }}
+            className={`rounded-full h-8 px-2.5 text-xs inline-flex items-center gap-1.5 shrink-0 ${
+              couplesRoomActive ? "bg-primary/10 text-primary border border-primary/20" : ""
+            }`}
+            title="Couple's Sanctuary Mode"
+          >
+            <HeartHandshake className={`size-4 ${couplesRoomActive ? "text-primary fill-primary/10 animate-pulse" : ""}`} />
+            <span className="hidden min-[480px]:inline">Couple's Sanctuary</span>
           </Button>
           <Button
             size="sm"
@@ -1574,7 +1594,9 @@ function Room() {
         </div>
       </header>
 
-      {loversTheater ? (
+      {couplesRoomActive ? (
+        <CouplesRoom roomId={roomId} onClose={() => setCouplesRoomActive(false)} />
+      ) : loversTheater ? (
         <LoversTheater
           embed={embed}
           videoRef={videoRef}

@@ -84,6 +84,23 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["id", "camOn", "micOn", "joinedAt", "updatedAt"]
+    },
+    "LoveNote": {
+      "title": "LoveNote",
+      "description": "A sweet, colorful note posted on the Couple's Room board",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "color": { "type": "string" },
+        "mood": { "type": "string" },
+        "at": { "type": "number" },
+        "likes": { "type": "integer" },
+        "likedBy": { "type": "array" }
+      },
+      "required": ["id", "senderId", "senderName", "text", "color", "mood", "at"]
     }
   },
   "firestore": {
@@ -110,6 +127,10 @@
     "rooms/{roomId}/presence/{clientId}": {
       "schema": "Presence",
       "description": "Users tracking presence entries in current room"
+    },
+    "rooms/{roomId}/loveNotes/{noteId}": {
+      "schema": "LoveNote",
+      "description": "Shared Love Notes board entries"
     }
   }
 }
