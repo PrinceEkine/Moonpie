@@ -24,6 +24,7 @@ import {
   CloudRain,
   Building2,
   StickyNote,
+  Timer,
 } from "lucide-react";
 import { db, auth, handleFirestoreError, OperationType } from "@/lib/firebase";
 import {
@@ -214,6 +215,11 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
   const currentTheme = THEMES[activeTheme];
   const partnersRef = useRef<string[]>([]);
 
+  // Countdown states
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownIntervalRef = useRef<number | null>(null);
+  const lastCountdownTriggerRef = useRef<number | null>(null);
+
   // Sounds elements
   const rainAudioRef = useRef<HTMLAudioElement | null>(null);
   const fireAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -251,6 +257,69 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
     if (ambient === "city") cityAudioRef.current?.play().catch(() => {});
   }, [ambient]);
 
+  // Countdown timer controls
+  const runCountdown = useCallback(() => {
+    if (countdownIntervalRef.current) {
+      window.clearInterval(countdownIntervalRef.current);
+    }
+    // Pause video immediately on countdown start
+    const v = videoRef.current;
+    if (v) {
+      v.pause();
+    }
+    setPlaying(false);
+
+    let n = 3;
+    setCountdown(n);
+    const iv = window.setInterval(() => {
+      n -= 1;
+      if (n <= 0) {
+        if (countdownIntervalRef.current) {
+          window.clearInterval(countdownIntervalRef.current);
+          countdownIntervalRef.current = null;
+        }
+        setCountdown(null);
+        const v2 = videoRef.current;
+        if (v2) {
+          void v2.play().catch(() => {});
+          setPlaying(true);
+        }
+      } else {
+        setCountdown(n);
+      }
+    }, 1000);
+    countdownIntervalRef.current = iv;
+  }, []);
+
+  const startCountdown = () => {
+    // Pause video locally first to avoid delay
+    const v = videoRef.current;
+    if (v) {
+      v.pause();
+    }
+    setPlaying(false);
+
+    const roomRef = doc(db, "rooms", roomId);
+    updateDoc(roomRef, {
+      countdownStart: Date.now(),
+      playing: false,
+      currentTime: videoRef.current?.currentTime || 0,
+    })
+      .then(() => {
+        runCountdown();
+      })
+      .catch((err) => handleFirestoreError(err, OperationType.UPDATE, `rooms/${roomId}`));
+  };
+
+  // Clean up countdown interval on unmount
+  useEffect(() => {
+    return () => {
+      if (countdownIntervalRef.current) {
+        window.clearInterval(countdownIntervalRef.current);
+      }
+    };
+  }, []);
+
   // Helper to spawn a floating heart/reaction element on screen
   const spawnHeart = useCallback((emoji: string) => {
     const id = Math.random().toString(36).slice(2, 9);
@@ -265,6 +334,7 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
   useEffect(() => {
     if (!roomId) return;
 
+    const subscribeTime = Date.now();
     const roomRef = doc(db, "rooms", roomId);
     
     // Create room if it doesn't exist
@@ -280,6 +350,12 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
       // Theme
       if (data.theme && data.theme !== activeTheme) {
         setActiveTheme(data.theme as ThemeKey);
+      }
+
+      // Countdown syncer trigger
+      if (data.countdownStart && data.countdownStart > subscribeTime && data.countdownStart !== lastCountdownTriggerRef.current) {
+        lastCountdownTriggerRef.current = data.countdownStart;
+        runCountdown();
       }
 
       // Warm glow & cuddle mode
@@ -326,7 +402,7 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
     }, (err) => handleFirestoreError(err, OperationType.GET, `rooms/${roomId}`));
 
     return () => unsubscribe();
-  }, [roomId, activeUrl, playing]);
+  }, [roomId, activeUrl, playing, runCountdown]);
 
   // 2. Subscribe to Presence list and detect enters/leaves
   useEffect(() => {
@@ -684,6 +760,18 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
       {/* Dynamic theme accent light */}
       <div className={`absolute top-0 inset-x-0 h-96 bg-gradient-to-b ${currentTheme.accentGradient} pointer-events-none blur-3xl opacity-60 z-0`} />
 
+      {countdown !== null && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
+          <span
+            key={countdown}
+            className="font-serif text-[14rem] italic animate-[pop_1s_ease-out]"
+            style={{ color: currentTheme.primaryColor || "#f43f5e" }}
+          >
+            {countdown}
+          </span>
+        </div>
+      )}
+
       {/* Warm candlelight glow filter overlay */}
       <div
         className={`pointer-events-none fixed inset-0 bg-amber-500/5 transition-opacity duration-1000 z-40 ${
@@ -988,6 +1076,18 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
                 })}
               </div>
 
+              {/* 3-2-1 Countdown Trigger */}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={startCountdown}
+                className="rounded-full text-xs font-semibold flex items-center gap-1.5 h-8 border border-border/40 text-muted-foreground hover:text-foreground"
+                title="Initiate a synced 3-2-1 countdown to play together"
+              >
+                <Timer className="size-3.5" />
+                <span>3-2-1 Countdown</span>
+              </Button>
+
               {/* Special Cuddle overlay toggle */}
               <Button
                 size="sm"
@@ -1281,6 +1381,11 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
             transform: translateY(-280px) scale(1.4) rotate(15deg);
             opacity: 0;
           }
+        }
+        @keyframes pop {
+          0% { transform: scale(0.3); opacity: 0; }
+          30% { transform: scale(1.1); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
         }
       `}</style>
     </div>

@@ -411,7 +411,11 @@ function Room() {
           const data = payload as { theme: ThemeKey };
           await updateDoc(roomRef, { theme: data.theme });
         } else if (event === "countdown") {
-          await updateDoc(roomRef, { countdownStart: Date.now() });
+          await updateDoc(roomRef, {
+            countdownStart: Date.now(),
+            playing: false,
+            currentTime: videoRef.current?.currentTime ?? 0,
+          });
         } else if (event === "confetti") {
           await updateDoc(roomRef, { confettiTrigger: Date.now() });
         } else if (event === "note") {
@@ -1076,6 +1080,12 @@ function Room() {
   // Countdown
   const [countdown, setCountdown] = useState<number | null>(null);
   function startCountdown() {
+    // Immediately pause local video
+    const v = videoRef.current;
+    if (v) {
+      v.pause();
+    }
+    setPlaying(false);
     broadcast("countdown", { start: Date.now() });
     runCountdown();
   }
@@ -1083,6 +1093,13 @@ function Room() {
     if (countdownIntervalRef.current) {
       window.clearInterval(countdownIntervalRef.current);
     }
+    // Pause video immediately on countdown start
+    const v = videoRef.current;
+    if (v) {
+      v.pause();
+    }
+    setPlaying(false);
+
     let n = 3;
     setCountdown(n);
     const iv = window.setInterval(() => {
@@ -1093,8 +1110,11 @@ function Room() {
           countdownIntervalRef.current = null;
         }
         setCountdown(null);
-        const v = videoRef.current;
-        if (v) void v.play().catch(() => {});
+        const v2 = videoRef.current;
+        if (v2) {
+          void v2.play().catch(() => {});
+          setPlaying(true);
+        }
       } else {
         setCountdown(n);
       }
