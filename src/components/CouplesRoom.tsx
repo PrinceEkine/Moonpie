@@ -160,7 +160,7 @@ function toEmbed(url: string): { src: string; kind: "iframe" | "video" } | null 
       } else {
         id = u.searchParams.get("v") || "";
       }
-      if (id) return { src: `https://www.youtube.com/embed/${id}?autoplay=0`, kind: "iframe" };
+      if (id) return { src: `https://www.youtube.com/embed/${id}?autoplay=0&enablejsapi=1`, kind: "iframe" };
     }
     
     // Generic direct video URLs
@@ -169,7 +169,8 @@ function toEmbed(url: string): { src: string; kind: "iframe" | "video" } | null 
     }
     
     // Fallback as iframe
-    return { src: url, kind: "iframe" };
+    const connector = url.includes("?") ? "&" : "?";
+    return { src: `${url}${connector}enablejsapi=1`, kind: "iframe" };
   } catch (_) {
     return null;
   }
@@ -185,6 +186,36 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const embed = useMemo(() => toEmbed(activeUrl), [activeUrl]);
+
+  // Creator & Companion States
+  const [createdBy, setCreatedBy] = useState<string | null>(null);
+  const [creatorName, setCreatorName] = useState<string | null>(null);
+  const [mediaTab, setMediaTab] = useState<"cinema" | "netflix" | "portal">("cinema");
+  const [activeNetflixTitle, setActiveNetflixTitle] = useState<string | null>(null);
+  const [netflixPlaying, setNetflixPlaying] = useState<boolean>(false);
+  const [netflixCurrentTime, setNetflixCurrentTime] = useState<number>(0);
+  const [netflixInput, setNetflixInput] = useState("");
+
+  const isCreator = !createdBy || createdBy === me;
+
+  // Refs to guard play loopback & presence alerts
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const isRemoteActionRef = useRef(false);
+
+  const controlYouTubeIframe = useCallback((iframeEl: HTMLIFrameElement | null, command: "playVideo" | "pauseVideo" | "seekTo", args?: any) => {
+    if (!iframeEl || !iframeEl.contentWindow) return;
+    try {
+      const payload = JSON.stringify({
+        event: "command",
+        func: command,
+        args: args !== undefined ? args : ""
+      });
+      iframeEl.contentWindow.postMessage(payload, "*");
+    } catch (err) {
+      console.error("Failed to post message to YouTube iframe:", err);
+    }
+  }, []);
 
   // UI state
   const [activeTheme, setActiveTheme] = useState<ThemeKey>("midnight");
@@ -210,8 +241,6 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
   const [camOn, setCamOn] = useState(false);
 
   // Refs to guard play loopback & presence alerts
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const isRemoteActionRef = useRef(false);
   const currentTheme = THEMES[activeTheme];
   const partnersRef = useRef<string[]>([]);
 
@@ -266,6 +295,11 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
     const v = videoRef.current;
     if (v) {
       v.pause();
+    } else {
+      const isYouTube = activeUrl && (activeUrl.includes("youtube.com") || activeUrl.includes("youtu.be"));
+      if (isYouTube && iframeRef.current) {
+        controlYouTubeIframe(iframeRef.current, "pauseVideo");
+      }
     }
     setPlaying(false);
 
@@ -283,19 +317,34 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
         if (v2) {
           void v2.play().catch(() => {});
           setPlaying(true);
+        } else {
+          const isYouTube = activeUrl && (activeUrl.includes("youtube.com") || activeUrl.includes("youtu.be"));
+          if (isYouTube && iframeRef.current) {
+            controlYouTubeIframe(iframeRef.current, "playVideo");
+            setPlaying(true);
+          }
         }
       } else {
         setCountdown(n);
       }
     }, 1000);
     countdownIntervalRef.current = iv;
-  }, []);
+  }, [activeUrl, controlYouTubeIframe]);
 
   const startCountdown = () => {
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can trigger the countdown.`);
+      return;
+    }
     // Pause video locally first to avoid delay
     const v = videoRef.current;
     if (v) {
       v.pause();
+    } else {
+      const isYouTube = activeUrl && (activeUrl.includes("youtube.com") || activeUrl.includes("youtu.be"));
+      if (isYouTube && iframeRef.current) {
+        controlYouTubeIframe(iframeRef.current, "pauseVideo");
+      }
     }
     setPlaying(false);
 
@@ -341,11 +390,22 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
     setDoc(roomRef, {
       id: roomId,
       createdAt: Date.now(),
+      createdBy: auth.currentUser?.uid || "unknown",
+      creatorName: auth.currentUser?.displayName || "Creator",
     }, { merge: true }).catch((err) => handleFirestoreError(err, OperationType.CREATE, `rooms/${roomId}`));
 
     const unsubscribe = onSnapshot(roomRef, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
+
+      // Creator details
+      if (data.createdBy) setCreatedBy(data.createdBy);
+      if (data.creatorName) setCreatorName(data.creatorName);
+
+      // Netflix states
+      if (data.activeNetflixTitle !== undefined) setActiveNetflixTitle(data.activeNetflixTitle);
+      if (data.netflixPlaying !== undefined) setNetflixPlaying(data.netflixPlaying);
+      if (data.netflixCurrentTime !== undefined) setNetflixCurrentTime(data.netflixCurrentTime);
 
       // Theme
       if (data.theme && data.theme !== activeTheme) {
@@ -364,14 +424,15 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
       if (data.ambient) setAmbient(data.ambient);
 
       // Active media synchronization
-      if (data.activeUrl && data.activeUrl !== activeUrl) {
+      if (data.activeUrl !== undefined && data.activeUrl !== activeUrl) {
         isRemoteActionRef.current = true;
         setActiveUrl(data.activeUrl);
         setMovieInput(data.activeUrl);
         setTimeout(() => { isRemoteActionRef.current = false; }, 350);
       }
 
-      // Sync play state
+      // Sync play state & position
+      const isYouTube = activeUrl && (activeUrl.includes("youtube.com") || activeUrl.includes("youtu.be"));
       const v = videoRef.current;
       if (v) {
         if (typeof data.playing === "boolean" && data.playing !== playing) {
@@ -395,6 +456,19 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
             setTimeout(() => { isRemoteActionRef.current = false; }, 350);
           }
         }
+      } else if (isYouTube && iframeRef.current) {
+        if (typeof data.playing === "boolean" && data.playing !== playing) {
+          setPlaying(data.playing);
+          if (data.playing) {
+            controlYouTubeIframe(iframeRef.current, "playVideo");
+          } else {
+            controlYouTubeIframe(iframeRef.current, "pauseVideo");
+          }
+        }
+        if (typeof data.currentTime === "number") {
+          controlYouTubeIframe(iframeRef.current, "seekTo", [data.currentTime, true]);
+          setCurrentTime(data.currentTime);
+        }
       } else {
         if (typeof data.playing === "boolean") setPlaying(data.playing);
         if (typeof data.currentTime === "number") setCurrentTime(data.currentTime);
@@ -402,7 +476,7 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
     }, (err) => handleFirestoreError(err, OperationType.GET, `rooms/${roomId}`));
 
     return () => unsubscribe();
-  }, [roomId, activeUrl, playing, runCountdown]);
+  }, [roomId, activeUrl, playing, runCountdown, controlYouTubeIframe]);
 
   // 2. Subscribe to Presence list and detect enters/leaves
   useEffect(() => {
@@ -566,6 +640,10 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
   // Broadcast media play action to Firestore
   const handleLocalPlay = () => {
     if (isRemoteActionRef.current) return;
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can play media.`);
+      return;
+    }
     const roomRef = doc(db, "rooms", roomId);
     updateDoc(roomRef, {
       playing: true,
@@ -576,6 +654,10 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
   // Broadcast media pause action to Firestore
   const handleLocalPause = () => {
     if (isRemoteActionRef.current) return;
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can pause media.`);
+      return;
+    }
     const roomRef = doc(db, "rooms", roomId);
     updateDoc(roomRef, {
       playing: false,
@@ -586,6 +668,10 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
   // Broadcast media seeking action to Firestore
   const handleLocalSeeked = () => {
     if (isRemoteActionRef.current) return;
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can seek media.`);
+      return;
+    }
     const roomRef = doc(db, "rooms", roomId);
     updateDoc(roomRef, {
       currentTime: videoRef.current?.currentTime || 0,
@@ -595,17 +681,71 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
   // Broadcast loading a new movie URL to Firestore
   const handleLoadMovie = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can change the active video.`);
+      return;
+    }
     const t = movieInput.trim();
     if (!t) return;
 
     const roomRef = doc(db, "rooms", roomId);
     updateDoc(roomRef, {
       activeUrl: t,
+      movieUrl: t,
       playing: false,
       currentTime: 0,
+      activeNetflixTitle: null, // Clear Netflix when loading a direct URL!
     })
       .then(() => toast.success("Atmosphere ticket printed! Playing movie in sync. 🎟️"))
       .catch((err) => handleFirestoreError(err, OperationType.UPDATE, `rooms/${roomId}`));
+  };
+
+  const handleNetflixSync = (title: string, netflixUrl: string) => {
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can change Netflix watch selections.`);
+      return;
+    }
+    const roomRef = doc(db, "rooms", roomId);
+    updateDoc(roomRef, {
+      activeNetflixTitle: title,
+      activeUrl: "", // Clear cinema activeUrl
+      movieUrl: "",
+      netflixPlaying: false,
+      netflixCurrentTime: 0,
+    })
+      .then(() => toast.success(`Synced Netflix selection: "${title}" 🍿`))
+      .catch((err) => handleFirestoreError(err, OperationType.UPDATE, `rooms/${roomId}`));
+  };
+
+  const handleNetflixPlayToggle = (playState: boolean) => {
+    if (!isCreator) {
+      toast.error(`Only the room creator can control Netflix Teleparty sync.`);
+      return;
+    }
+    const roomRef = doc(db, "rooms", roomId);
+    updateDoc(roomRef, {
+      netflixPlaying: playState,
+    }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `rooms/${roomId}`));
+  };
+
+  const handleNetflixCustomSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!netflixInput.trim()) return;
+    handleNetflixSync(netflixInput.trim(), "https://netflix.com");
+    setNetflixInput("");
+  };
+
+  const handleClearNetflix = () => {
+    if (!isCreator) {
+      toast.error(`Only the room creator can clear Netflix selection.`);
+      return;
+    }
+    const roomRef = doc(db, "rooms", roomId);
+    updateDoc(roomRef, {
+      activeNetflixTitle: null,
+      activeUrl: "",
+      movieUrl: "",
+    }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `rooms/${roomId}`));
   };
 
   // Change Theme environment
@@ -865,7 +1005,7 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
 
             {/* Screen Inner Stage container */}
             <div className="absolute inset-0 px-8 md:px-16 py-3 flex items-center justify-center z-0">
-              {!activeUrl ? (
+              {!activeUrl && !activeNetflixTitle ? (
                 <div className="text-center max-w-sm flex flex-col items-center gap-4 text-muted-foreground p-6">
                   <div
                     className="size-16 rounded-full flex items-center justify-center bg-primary/5 border border-primary/20 shadow-[0_0_20px_rgba(239,68,68,0.15)] animate-pulse"
@@ -875,14 +1015,54 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
                   </div>
                   <h3 className="font-serif text-2xl text-foreground font-medium">Theater Seats Unoccupied</h3>
                   <p className="text-xs text-muted-foreground/80 leading-relaxed">
-                    Paste a direct streaming link or YouTube URL below to print your movie date ticket.
+                    Paste a direct streaming link, YouTube URL, or switch to the Netflix Companion tab below to activate Teleparty co-watching.
                   </p>
+                </div>
+              ) : activeNetflixTitle ? (
+                <div className="w-full h-full rounded-2xl overflow-hidden bg-gradient-to-b from-neutral-950 via-neutral-900 to-black border border-red-500/10 relative flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-48 bg-red-600/5 rounded-full blur-3xl pointer-events-none" />
+                  
+                  {/* Pulse Red Glow indicator */}
+                  <div className="flex items-center gap-2 mb-3 bg-red-600/10 px-3 py-1 rounded-full border border-red-500/20 text-red-500 text-[10px] font-bold tracking-widest uppercase animate-pulse">
+                    <span>Teleparty Active</span>
+                  </div>
+
+                  <h3 className="text-3xl font-black text-red-600 tracking-tighter mb-1 uppercase drop-shadow-md">NETFLIX</h3>
+                  <p className="text-lg font-serif text-white font-medium mb-3">Watching "{activeNetflixTitle}" together 🍿</p>
+                  
+                  <div className="max-w-md bg-neutral-950/80 border border-neutral-800 rounded-xl p-4 space-y-3 shadow-lg z-10">
+                    <p className="text-[11px] text-zinc-400">
+                      We're synchronizing playback events on Netflix! Open Netflix in a separate window to watch, and use this console or start screensharing to sync.
+                    </p>
+                    
+                    <div className="flex items-center justify-center gap-3 py-1">
+                      <span className="text-xs text-zinc-400">Creator Control:</span>
+                      <div className="inline-flex items-center gap-2 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800 text-xs text-white">
+                        <span className={`size-2 rounded-full ${netflixPlaying ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
+                        <span>{netflixPlaying ? "Playing" : "Paused"}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Floating hearts emojis layer */}
+                  <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+                    {floaters.map((f) => (
+                      <span
+                        key={f.id}
+                        className="absolute bottom-4 text-3xl animate-[floatUp_2.8s_ease-out_forwards]"
+                        style={{ left: `${f.left}%` }}
+                      >
+                        {f.emoji}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="w-full h-full rounded-2xl overflow-hidden bg-neutral-950 border border-zinc-900 relative flex items-center justify-center">
                   
                   {embed?.kind === "iframe" && (
                     <iframe
+                      ref={iframeRef}
                       key={embed.src}
                       src={embed.src}
                       allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
@@ -895,7 +1075,7 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
                     <video
                       ref={videoRef}
                       src={embed.src}
-                      controls
+                      controls={isCreator}
                       onPlay={handleLocalPlay}
                       onPause={handleLocalPause}
                       onSeeked={handleLocalSeeked}
@@ -1007,34 +1187,232 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
             </div>
           </div>
 
-          {/* 3. Stream Admission control form & Sync Features toolbar */}
-          <div className="space-y-4">
-            <form onSubmit={handleLoadMovie} className="relative flex items-center">
-              <Input
-                value={movieInput}
-                onChange={(e) => setMovieInput(e.target.value)}
-                placeholder="Paste cinema direct media URL or YouTube URL..."
-                className="h-12 rounded-full border-border/80 bg-card/40 pl-5 pr-44 text-sm focus:ring-2 focus:ring-primary/40 text-foreground shadow-sm"
-              />
-              <div className="absolute right-1.5 top-1.5 flex gap-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleAddToQueue}
-                  className="h-9 rounded-full px-3 text-xs flex items-center gap-1 border-border bg-card/50"
-                  disabled={!movieInput.trim()}
-                >
-                  Lineup Queue
-                </Button>
-                <Button
-                  type="submit"
-                  size="sm"
-                  className="h-9 rounded-full px-5 font-semibold text-xs active:scale-95 transition-all text-white bg-primary hover:bg-primary/95 shadow-md"
-                >
-                  Play Link
-                </Button>
+          {/* 3. Stream Media Control Center (Cinema, Netflix Teleparty & Portal Extractors) */}
+          <div className="space-y-5 rounded-3xl border border-border/60 bg-card/15 p-5 backdrop-blur-md">
+            
+            {/* Elegant Tab Selector */}
+            <div className="flex items-center gap-1.5 p-1 bg-background/50 border border-border/60 rounded-full max-w-sm">
+              <button
+                type="button"
+                onClick={() => setMediaTab("cinema")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                  mediaTab === "cinema" 
+                    ? "bg-primary text-white shadow-xs" 
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Film className="size-3.5" /> Cinema Player
+              </button>
+              <button
+                type="button"
+                onClick={() => setMediaTab("netflix")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                  mediaTab === "netflix" 
+                    ? "bg-red-600 text-white shadow-xs" 
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Tv className="size-3.5" /> Netflix
+              </button>
+              <button
+                type="button"
+                onClick={() => setMediaTab("portal")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                  mediaTab === "portal" 
+                    ? "bg-amber-600 text-white shadow-xs" 
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <ExternalLink className="size-3.5" /> Link Portal Fixes
+              </button>
+            </div>
+
+            {/* TAB CONTENT: CINEMA */}
+            {mediaTab === "cinema" && (
+              <div className="space-y-3 animate-in fade-in duration-300">
+                {!isCreator && (
+                  <div className="text-xs bg-amber-500/10 border border-amber-500/20 text-amber-500 px-4 py-2.5 rounded-2xl flex items-center gap-2 font-medium">
+                    <span>🔒 Control Locked: Only the room creator ({creatorName || "Creator"}) can load direct video URLs or change play states.</span>
+                  </div>
+                )}
+                
+                <form onSubmit={handleLoadMovie} className="relative flex items-center">
+                  <Input
+                    value={movieInput}
+                    onChange={(e) => setMovieInput(e.target.value)}
+                    placeholder={isCreator ? "Paste direct MP4/WebM URL or YouTube URL..." : `Locked by ${creatorName || "Creator"}`}
+                    disabled={!isCreator}
+                    className="h-12 rounded-full border-border/80 bg-background/50 pl-5 pr-44 text-sm focus:ring-2 focus:ring-primary/40 text-foreground shadow-sm"
+                  />
+                  <div className="absolute right-1.5 top-1.5 flex gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleAddToQueue}
+                      className="h-9 rounded-full px-3 text-xs flex items-center gap-1 border-border bg-card/50"
+                      disabled={!isCreator || !movieInput.trim()}
+                    >
+                      Lineup Queue
+                    </Button>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={!isCreator}
+                      className="h-9 rounded-full px-5 font-semibold text-xs active:scale-95 transition-all text-white bg-primary hover:bg-primary/95 shadow-md disabled:opacity-50"
+                    >
+                      Play Link
+                    </Button>
+                  </div>
+                </form>
+                <p className="text-[11px] text-muted-foreground/80 pl-2">
+                  Direct links play instantly in fully synced HD. Use the roulette below to select a cozy mystery film!
+                </p>
               </div>
-            </form>
+            )}
+
+            {/* TAB CONTENT: NETFLIX COMPANION & TELEPARTY */}
+            {mediaTab === "netflix" && (
+              <div className="space-y-4 animate-in fade-in duration-300 text-left">
+                {activeNetflixTitle ? (
+                  <div className="border border-red-500/20 bg-red-950/15 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="text-[9px] font-bold text-red-500 tracking-wider uppercase">Active Teleparty</span>
+                        <h4 className="text-sm font-semibold text-white">Currently watch-synced: "{activeNetflixTitle}"</h4>
+                      </div>
+                      {isCreator && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={handleClearNetflix}
+                          className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/30 rounded-lg px-2"
+                        >
+                          Clear Selection
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Play control triggers */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button
+                        size="xs"
+                        variant={netflixPlaying ? "default" : "outline"}
+                        onClick={() => handleNetflixPlayToggle(true)}
+                        disabled={!isCreator}
+                        className={`h-8 px-3 rounded-full text-xs font-semibold ${netflixPlaying ? "bg-red-600 hover:bg-red-700 text-white border-none" : "border-zinc-800 text-zinc-300"}`}
+                      >
+                        <Play className="size-3 mr-1 fill-current" /> Sync Play
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant={!netflixPlaying ? "default" : "outline"}
+                        onClick={() => handleNetflixPlayToggle(false)}
+                        disabled={!isCreator}
+                        className={`h-8 px-3 rounded-full text-xs font-semibold ${!netflixPlaying ? "bg-zinc-800 text-white border-none" : "border-zinc-800 text-zinc-300"}`}
+                      >
+                        <Pause className="size-3 mr-1 fill-current" /> Sync Pause
+                      </Button>
+                      <span className="text-[10px] text-zinc-500 pl-2">
+                        {isCreator ? "Trigger teleparty action on partner's display!" : `Syncing with room creator...`}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-zinc-950/50 border border-zinc-800 rounded-2xl p-4 text-center">
+                    <Tv className="size-6 text-red-500 mx-auto mb-2 animate-pulse" />
+                    <p className="text-xs text-zinc-300 font-medium">No active Netflix co-watch title set.</p>
+                    <p className="text-[10px] text-zinc-500 max-w-sm mx-auto mt-1">
+                      Use the customized launcher choices below, or type a custom title to start co-watching with your partner!
+                    </p>
+                  </div>
+                )}
+
+                {/* Direct Custom Title Selector */}
+                {isCreator ? (
+                  <form onSubmit={handleNetflixCustomSubmit} className="relative flex items-center">
+                    <Input
+                      value={netflixInput}
+                      onChange={(e) => setNetflixInput(e.target.value)}
+                      placeholder="Type show title (e.g., Emily in Paris)..."
+                      className="h-10 rounded-full border-zinc-800 bg-zinc-950 pl-4 pr-32 text-xs focus:ring-2 focus:ring-red-500/40 text-foreground shadow-sm"
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      className="absolute right-1.5 top-1.5 h-7 rounded-full px-4 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white"
+                      disabled={!netflixInput.trim()}
+                    >
+                      Sync Title
+                    </Button>
+                  </form>
+                ) : (
+                  <div className="text-xs bg-zinc-900/40 border border-zinc-800 px-4 py-2.5 rounded-2xl text-center text-zinc-400">
+                    🍿 Room creator is currently browsing Netflix titles.
+                  </div>
+                )}
+
+                {/* Curated Co-Watch List */}
+                <div className="space-y-2">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-1">Suggested Romance & Cozy Hits:</span>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {[
+                      { title: "Bridgerton", genre: "Period Drama" },
+                      { title: "Stranger Things", genre: "Sci-Fi Mystery" },
+                      { title: "Emily in Paris", genre: "Chic Romance" },
+                      { title: "Our Beloved Summer", genre: "K-Drama Love" },
+                      { title: "La La Land", genre: "Cozy Musical" },
+                      { title: "The Notebook", genre: "Emotional Classic" },
+                    ].map((item) => (
+                      <button
+                        key={item.title}
+                        type="button"
+                        disabled={!isCreator}
+                        onClick={() => handleNetflixSync(item.title, "https://netflix.com")}
+                        className={`text-left p-2.5 rounded-xl border transition-all text-xs flex flex-col justify-between ${
+                          isCreator 
+                            ? "bg-zinc-950/45 border-zinc-800 hover:border-red-500/30 hover:bg-zinc-900/30 cursor-pointer" 
+                            : "bg-zinc-950/10 border-zinc-900/50 opacity-60"
+                        }`}
+                      >
+                        <span className="font-semibold text-zinc-200">{item.title}</span>
+                        <span className="text-[9px] text-zinc-500 mt-0.5">{item.genre}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT: LINK PORTAL TIPS (Solving Moviebox.ph iframe blockage) */}
+            {mediaTab === "portal" && (
+              <div className="space-y-4 animate-in fade-in duration-300 text-left bg-amber-500/5 border border-amber-500/10 rounded-2xl p-4 text-xs text-amber-200/90 leading-relaxed">
+                <div className="flex items-center gap-2 text-amber-500 font-bold uppercase text-[10px] tracking-wider mb-1">
+                  <Sparkles className="size-4 text-amber-500 animate-spin" />
+                  <span>How to bypass iframe blockages (Moviebox.ph etc.)</span>
+                </div>
+                
+                <div className="space-y-2.5">
+                  <p>
+                    Many popular websites (like <strong>Moviebox.ph, Soap2day, or Flixtor</strong>) use a security response header called <code className="bg-amber-950/40 px-1 py-0.5 rounded text-amber-300 font-mono">X-Frame-Options: SAMEORIGIN</code> to actively block external apps from displaying their full page inside an iframe player.
+                  </p>
+                  
+                  <div className="border-l-2 border-amber-500/30 pl-3 space-y-1">
+                    <p className="font-semibold text-amber-400">💡 Tip 1: Paste the Direct Media URL</p>
+                    <p className="text-[11px] text-amber-100/70">
+                      Right-click the movie player on those sites, select "Inspect", go to the <strong>Network</strong> tab, filter by "Media" (or search for <code className="text-amber-300">.mp4</code> or <code className="text-amber-300">.m3u8</code>), and copy that link! Paste it in the <strong>Cinema Player</strong> tab to watch a direct, fully synced video without any ads or frame blockages.
+                    </p>
+                  </div>
+
+                  <div className="border-l-2 border-amber-500/30 pl-3 space-y-1">
+                    <p className="font-semibold text-amber-400">💡 Tip 2: Double-Click or Open Link Externally</p>
+                    <p className="text-[11px] text-amber-100/70">
+                      If the site's page gets blockaded or redirected, simply open the video in an adjacent tab, keep the Couple's Room <strong>Voice / Audio seats</strong> active, and co-watch on double-monitors or via picture-in-picture mode!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
             {/* Quick Interactions Bar & Ambient Audio Toggles */}
             <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border/50 bg-card/25 p-3.5 backdrop-blur-md">
@@ -1101,7 +1479,6 @@ export function CouplesRoom({ roomId, onClose }: CouplesRoomProps) {
                 <span>Cuddle Overlay</span>
               </Button>
             </div>
-          </div>
 
           {/* 4. Love Notes Wall */}
           <div className="relative rounded-3xl border border-border/50 bg-card/25 backdrop-blur-md p-6 flex flex-col gap-6 shadow-xs overflow-hidden">

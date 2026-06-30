@@ -194,19 +194,21 @@ function toEmbed(url: string): { src: string; kind: "iframe" | "video" } | null 
     // YouTube
     if (host === "youtube.com" || host === "m.youtube.com") {
       const id = u.searchParams.get("v");
-      if (id) return { src: `https://www.youtube.com/embed/${id}?autoplay=0`, kind: "iframe" };
+      if (id) return { src: `https://www.youtube.com/embed/${id}?autoplay=0&enablejsapi=1`, kind: "iframe" };
       if (u.pathname.startsWith("/shorts/")) {
         const shortsId = u.pathname.split("/")[2];
         if (shortsId)
-          return { src: `https://www.youtube.com/embed/${shortsId}?autoplay=0`, kind: "iframe" };
+          return { src: `https://www.youtube.com/embed/${shortsId}?autoplay=0&enablejsapi=1`, kind: "iframe" };
       }
       if (u.pathname.startsWith("/embed/")) {
-        return { src: url, kind: "iframe" };
+        // ensure enablejsapi=1 is on standard embeds too
+        const connector = url.includes("?") ? "&" : "?";
+        return { src: `${url}${connector}enablejsapi=1`, kind: "iframe" };
       }
     }
     if (host === "youtu.be") {
       const id = u.pathname.slice(1);
-      if (id) return { src: `https://www.youtube.com/embed/${id}?autoplay=0`, kind: "iframe" };
+      if (id) return { src: `https://www.youtube.com/embed/${id}?autoplay=0&enablejsapi=1`, kind: "iframe" };
     }
     if (host === "vimeo.com") {
       const id = u.pathname.split("/").filter(Boolean)[0];
@@ -306,6 +308,29 @@ function Room() {
   const [activeUrl, setActiveUrl] = useState("");
   const embed = useMemo(() => toEmbed(activeUrl), [activeUrl]);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [createdBy, setCreatedBy] = useState<string | null>(null);
+  const [creatorName, setCreatorName] = useState<string | null>(null);
+  const [activeNetflixTitle, setActiveNetflixTitle] = useState<string | null>(null);
+  const [netflixPlaying, setNetflixPlaying] = useState<boolean>(false);
+  const [netflixCurrentTime, setNetflixCurrentTime] = useState<number>(0);
+
+  const isCreator = !createdBy || createdBy === (auth.currentUser?.uid || "anonymous");
+
+  const controlYouTubeIframe = useCallback((iframeEl: HTMLIFrameElement | null, command: "playVideo" | "pauseVideo" | "seekTo", args?: any) => {
+    if (!iframeEl || !iframeEl.contentWindow) return;
+    try {
+      const payload = JSON.stringify({
+        event: "command",
+        func: command,
+        args: args !== undefined ? args : ""
+      });
+      iframeEl.contentWindow.postMessage(payload, "*");
+    } catch (err) {
+      console.error("Failed to post message to YouTube iframe:", err);
+    }
+  }, []);
+
   const isRemoteActionRef = useRef(false);
   const latestRoomDataRef = useRef<any>(null);
   const [playing, setPlaying] = useState(false);
@@ -468,6 +493,8 @@ function Room() {
           await setDoc(roomRef, {
             id: roomId,
             createdAt: new Date().toISOString(),
+            createdBy: auth.currentUser?.uid || "unknown",
+            creatorName: auth.currentUser?.displayName || "Creator",
             activeUrl: "",
             movieUrl: "",
             playing: false,
@@ -481,6 +508,14 @@ function Room() {
             note: "",
             confettiTrigger: null,
           });
+        } else {
+          const data = snap.data();
+          if (!data.createdBy) {
+            await updateDoc(roomRef, {
+              createdBy: auth.currentUser?.uid || "unknown",
+              creatorName: auth.currentUser?.displayName || "Creator"
+            }).catch(() => {});
+          }
         }
       } catch (err) {
         console.warn("Room initial document boot warning:", err);
@@ -495,6 +530,15 @@ function Room() {
         if (!snap.exists()) return;
         const data = snap.data();
         latestRoomDataRef.current = data;
+
+        // Set room creator details
+        if (data.createdBy) setCreatedBy(data.createdBy);
+        if (data.creatorName) setCreatorName(data.creatorName);
+
+        // Netflix states
+        if (data.activeNetflixTitle !== undefined) setActiveNetflixTitle(data.activeNetflixTitle);
+        if (data.netflixPlaying !== undefined) setNetflixPlaying(data.netflixPlaying);
+        if (data.netflixCurrentTime !== undefined) setNetflixCurrentTime(data.netflixCurrentTime);
 
         // Theme Sync
         if (data.theme && data.theme !== activeThemeRef.current) {
@@ -528,6 +572,7 @@ function Room() {
           }, 400);
         }
 
+        const isYouTube = activeUrlRef.current && (activeUrlRef.current.includes("youtube.com") || activeUrlRef.current.includes("youtu.be"));
         const v = videoRef.current;
         if (v) {
           let stateChanged = false;
@@ -561,6 +606,20 @@ function Room() {
               isRemoteActionRef.current = false;
             }, 500);
           }
+        } else if (isYouTube && iframeRef.current) {
+          if (typeof data.playing === "boolean" && data.playing !== playingRef.current) {
+            setPlaying(data.playing);
+            if (data.playing) {
+              controlYouTubeIframe(iframeRef.current, "playVideo");
+            } else {
+              controlYouTubeIframe(iframeRef.current, "pauseVideo");
+            }
+          }
+          if (typeof data.currentTime === "number") {
+            controlYouTubeIframe(iframeRef.current, "seekTo", [data.currentTime, true]);
+          }
+        } else {
+          if (typeof data.playing === "boolean") setPlaying(data.playing);
         }
 
         // Countdown syncer trigger
@@ -743,6 +802,10 @@ function Room() {
 
   function loadMovie(e: React.FormEvent) {
     e.preventDefault();
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can load or change the video.`);
+      return;
+    }
     const url = movieUrl.trim();
     if (!url) return;
     setActiveUrl(url);
@@ -781,20 +844,36 @@ function Room() {
 
   function onLocalPlay() {
     if (isRemoteActionRef.current) return;
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can control playback.`);
+      return;
+    }
     setPlaying(true);
     broadcast("playback", { action: "play", time: videoRef.current?.currentTime ?? 0 });
   }
   function onLocalPause() {
     if (isRemoteActionRef.current) return;
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can control playback.`);
+      return;
+    }
     setPlaying(false);
     broadcast("playback", { action: "pause", time: videoRef.current?.currentTime ?? 0 });
   }
   function onLocalSeeked() {
     if (isRemoteActionRef.current) return;
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can seek playback.`);
+      return;
+    }
     broadcast("playback", { action: "seek", time: videoRef.current?.currentTime ?? 0 });
   }
 
   function forceSyncVideo() {
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can synchronize playback.`);
+      return;
+    }
     const v = videoRef.current;
     if (!v) {
       void broadcast("webrtc", { type: "request-sync" });
@@ -1080,10 +1159,19 @@ function Room() {
   // Countdown
   const [countdown, setCountdown] = useState<number | null>(null);
   function startCountdown() {
+    if (!isCreator) {
+      toast.error(`Only the room creator (${creatorName || "Creator"}) can control playback.`);
+      return;
+    }
     // Immediately pause local video
     const v = videoRef.current;
     if (v) {
       v.pause();
+    } else {
+      const isYouTube = activeUrlRef.current && (activeUrlRef.current.includes("youtube.com") || activeUrlRef.current.includes("youtu.be"));
+      if (isYouTube && iframeRef.current) {
+        controlYouTubeIframe(iframeRef.current, "pauseVideo");
+      }
     }
     setPlaying(false);
     broadcast("countdown", { start: Date.now() });
@@ -1097,6 +1185,11 @@ function Room() {
     const v = videoRef.current;
     if (v) {
       v.pause();
+    } else {
+      const isYouTube = activeUrlRef.current && (activeUrlRef.current.includes("youtube.com") || activeUrlRef.current.includes("youtu.be"));
+      if (isYouTube && iframeRef.current) {
+        controlYouTubeIframe(iframeRef.current, "pauseVideo");
+      }
     }
     setPlaying(false);
 
@@ -1114,6 +1207,12 @@ function Room() {
         if (v2) {
           void v2.play().catch(() => {});
           setPlaying(true);
+        } else {
+          const isYouTube = activeUrlRef.current && (activeUrlRef.current.includes("youtube.com") || activeUrlRef.current.includes("youtu.be"));
+          if (isYouTube && iframeRef.current) {
+            controlYouTubeIframe(iframeRef.current, "playVideo");
+            setPlaying(true);
+          }
         }
       } else {
         setCountdown(n);
@@ -1620,6 +1719,10 @@ function Room() {
         <LoversTheater
           embed={embed}
           videoRef={videoRef}
+          iframeRef={iframeRef}
+          controlYouTubeIframe={controlYouTubeIframe}
+          isCreator={isCreator}
+          roomCreatorName={creatorName || "The Room Creator"}
           onLocalPlay={onLocalPlay}
           onLocalPause={onLocalPause}
           onLocalSeeked={onLocalSeeked}

@@ -24,6 +24,9 @@ import { auth } from "@/lib/firebase";
 interface LoversTheaterProps {
   embed: { src: string; kind: "iframe" | "video" } | null;
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  iframeRef?: React.RefObject<HTMLIFrameElement | null>;
+  isCreator?: boolean;
+  roomCreatorName?: string;
   onLocalPlay: () => void;
   onLocalPause: () => void;
   onLocalSeeked: () => void;
@@ -61,6 +64,9 @@ interface LoversTheaterProps {
 export function LoversTheater({
   embed,
   videoRef,
+  iframeRef,
+  isCreator = true,
+  roomCreatorName = "The Room Creator",
   onLocalPlay,
   onLocalPause,
   onLocalSeeked,
@@ -162,8 +168,9 @@ export function LoversTheater({
             </div>
           ) : (
             <div className="w-full h-full rounded-2xl overflow-hidden border border-zinc-900 bg-neutral-950 relative">
-              {embed.kind === "iframe" && (
+               {embed.kind === "iframe" && (
                 <iframe
+                  ref={iframeRef}
                   key={embed.src}
                   src={embed.src}
                   allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
@@ -175,7 +182,7 @@ export function LoversTheater({
                 <video
                   ref={videoRef}
                   src={embed.src}
-                  controls
+                  controls={isCreator}
                   onPlay={onLocalPlay}
                   onPause={onLocalPause}
                   onSeeked={onLocalSeeked}
@@ -294,19 +301,27 @@ export function LoversTheater({
 
       {/* Form and Controls underneath */}
       <div className="w-full max-w-3xl mt-8 space-y-4 z-10">
+        {!isCreator && (
+          <div className="text-xs bg-amber-500/10 border border-amber-500/20 text-amber-500 px-4 py-2.5 rounded-full flex items-center justify-center gap-2 font-medium">
+            <span>🔒 Control Locked: Only the room creator ({roomCreatorName}) can load movies, play/pause, or trigger countdowns.</span>
+          </div>
+        )}
+
         {/* Ticket-styled URL input */}
         <form onSubmit={loadMovie} className="relative flex items-center">
           <Input
             value={movieUrl}
             onChange={(e) => setMovieUrl(e.target.value)}
-            placeholder="Slot in movie or YouTube URL..."
+            placeholder={isCreator ? "Slot in movie or YouTube URL..." : `Controls locked by ${roomCreatorName}`}
+            disabled={!isCreator}
             className="h-12 rounded-full border-border bg-card/45 pl-5 pr-28 text-sm focus:ring-2 focus:ring-primary/40 text-foreground shadow-sm"
           />
           <div className="absolute right-1.5 top-1.5 flex gap-1">
             <Button
               type="submit"
               size="sm"
-              className="h-9 rounded-full px-5 font-semibold text-xs transition-all active:scale-95"
+              disabled={!isCreator}
+              className="h-9 rounded-full px-5 font-semibold text-xs transition-all active:scale-95 disabled:opacity-50"
               style={{ backgroundColor: currentTheme.primaryColor }}
             >
               Play Link
@@ -321,7 +336,8 @@ export function LoversTheater({
               size="sm"
               variant="ghost"
               onClick={startCountdown}
-              className="rounded-full h-8 text-xs font-semibold flex items-center gap-1 text-muted-foreground hover:text-foreground"
+              disabled={!isCreator}
+              className="rounded-full h-8 text-xs font-semibold flex items-center gap-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
             >
               <Timer className="size-3.5" /> Settle Curtains (Countdown)
             </Button>
@@ -329,7 +345,8 @@ export function LoversTheater({
               size="sm"
               variant="ghost"
               onClick={rouletteSpin}
-              className="rounded-full h-8 text-xs font-semibold flex items-center gap-1 text-muted-foreground hover:text-foreground"
+              disabled={!isCreator}
+              className="rounded-full h-8 text-xs font-semibold flex items-center gap-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
             >
               <Dice5 className="size-3.5" /> Film Roulette
             </Button>
@@ -337,8 +354,8 @@ export function LoversTheater({
               size="sm"
               variant="ghost"
               onClick={() => addToQueue(movieUrl)}
-              className="rounded-full h-8 text-xs font-semibold flex items-center gap-1 text-muted-foreground hover:text-foreground"
-              disabled={!movieUrl.trim()}
+              className="rounded-full h-8 text-xs font-semibold flex items-center gap-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
+              disabled={!isCreator || !movieUrl.trim()}
             >
               <Plus className="size-3.5" /> Save Lineup
             </Button>
